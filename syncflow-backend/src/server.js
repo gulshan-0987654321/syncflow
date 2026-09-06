@@ -216,11 +216,11 @@ io.on('connection', (socket) => {
     });
 });
 
-// Serve Frontend Static assets in Production
+// Serve Frontend Static assets in Production (if dist exists)
 const frontendDistPath = path.resolve(__dirname, '../../syncflow-frontend/dist');
 app.use(express.static(frontendDistPath));
 
-app.get('*', (req, res, next) => {
+app.use((req, res, next) => {
     // If request starts with /api or is a socket request, skip
     if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) {
         return next();
