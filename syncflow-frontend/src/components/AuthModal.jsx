@@ -503,9 +503,6 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
 
             {/* Form */}
             <form
-<<<<<<< HEAD
-              onSubmit={tab === 'register' ? handleRegisterSubmit : handleLoginSubmit}
-=======
               onSubmit={(e) => {
                 if (tab === 'register') {
                   handleRegisterSubmit(e);
@@ -513,7 +510,6 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                   handleLoginSubmit(e);
                 }
               }}
->>>>>>> 749ea8c (login in log out design issue resloved and camera working)
               className="space-y-3.5"
             >
               {tab === 'register' && (
@@ -552,10 +548,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                 </div>
               </div>
 
-<<<<<<< HEAD
               {/* Password field shown on both login and register */}
-=======
->>>>>>> 749ea8c (login in log out design issue resloved and camera working)
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Password
@@ -612,11 +605,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                   {loading
                     ? 'Processing...'
                     : tab === 'register'
-<<<<<<< HEAD
-                    ? 'Create Account & Sign In'
-=======
                     ? 'Create Account'
->>>>>>> 749ea8c (login in log out design issue resloved and camera working)
                     : 'Sign In'}
                 </span>
                 <ArrowRight className="w-4 h-4" />
