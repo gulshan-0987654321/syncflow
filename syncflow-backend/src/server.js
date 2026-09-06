@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.js';
 import userRoutes from './routes/user.js';
 import { updateUser } from './services/userService.js';
 
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -25,6 +26,10 @@ const io = new Server(httpServer, {
         methods: ['GET', 'POST', 'PUT', 'DELETE'],
         credentials: true
     }
+});
+
+app.get("/", (req, res) => {
+    res.send("Syncflow Backend is Running 🚀");
 });
 
 app.use(cors());
