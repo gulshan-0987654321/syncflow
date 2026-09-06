@@ -36,6 +36,10 @@ connectDB();
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', service: 'syncflow-backend', timestamp: new Date().toISOString() });
+});
+
 // Online Users Map: userId -> Set of socketIds
 const onlineUsers = new Map();
 // Socket to User map: socketId -> userId
@@ -210,6 +214,8 @@ io.on('connection', (socket) => {
             }
         });
     });
+});
+
 // Serve Frontend Static assets in Production
 const frontendDistPath = path.resolve(__dirname, '../../syncflow-frontend/dist');
 app.use(express.static(frontendDistPath));
