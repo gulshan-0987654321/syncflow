@@ -19,7 +19,7 @@ import {
 const SUGGESTED_SKILLS = ['C++', 'Java', 'Python', 'React', 'Node.js', 'DSA', 'TypeScript', 'DevOps'];
 
 export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
-  const { login, register, sendVerificationOtp, verifyEmailOtp } = useAuth();
+  const { login, register, loginWithGoogle, sendVerificationOtp, verifyEmailOtp } = useAuth();
   const [tab, setTab] = useState(initialTab); // 'register' | 'login'
 
   // Form Fields
@@ -37,7 +37,10 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
       const saved = localStorage.getItem('syncflow_saved_google_accounts');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return [];
+    return [
+      { name: 'Vishal (Dev)', email: 'vishal@syncflow.io', avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=vishal' },
+      { name: 'Alex (Peer)', email: 'alex@syncflow.io', avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=alex' }
+    ];
   });
 
   const [showAddOtherAccount, setShowAddOtherAccount] = useState(true);
@@ -70,7 +73,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
     }
   };
 
-  // 1. User Touches/Clicks their Google Email -> Sends Verification Code & Opens Verification Step
+  // 1. One-Click Google Account Selection -> Direct Login
   const handleTouchSelectGoogleAccount = async (account) => {
     const selectedEmail = account.email.trim().toLowerCase();
     const selectedName = account.name || selectedEmail.split('@')[0];
@@ -89,26 +92,24 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
       setSavedAccounts(updatedList);
       localStorage.setItem('syncflow_saved_google_accounts', JSON.stringify(updatedList));
 
-      // Request 6-digit verification code from backend
-      const res = await sendVerificationOtp(selectedEmail);
+      // Direct Google Login without OTP blocker
+      await loginWithGoogle({
+        email: selectedEmail,
+        name: selectedName,
+        avatar: selectedAvatar,
+      });
 
-      setPendingEmail(selectedEmail);
-      setPendingName(selectedName);
-      setPendingAvatar(selectedAvatar);
-      setDemoOtpHint(res.otp || '');
-      setOtpCode(res.otp || ''); // auto-fill for frictionless UX
       setIsGooglePickerOpen(false);
-      setIsVerifyingOtp(true);
-      setResendCountdown(60);
+      onClose();
     } catch (err) {
-      console.error('Account Selection Error:', err);
-      setError(err.message || 'Failed to select Google account.');
+      console.error('Google Sign-In Error:', err);
+      setError(err.message || 'Google authentication failed.');
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Submit Verification Code & Complete Login
+  // 2. Submit Verification Code (if OTP flow used)
   const handleVerifyOtpSubmit = async (e) => {
     e.preventDefault();
     if (!otpCode || otpCode.trim().length !== 6) {
@@ -151,6 +152,42 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
         throw new Error('Please enter both your email and password.');
       }
       await login(email, password);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 4. Standard Register Submit
+  const handleRegisterSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (!email || !password) {
+        throw new Error('Please enter both your email and password.');
+      }
+      if (password.length < 4) {
+        throw new Error('Password must be at least 4 characters.');
+      }
+      await register(username || email.split('@')[0], email, password, selectedSkills);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 5. Quick Demo Account Login Helper
+  const handleQuickLogin = async (demoEmail, demoPassword) => {
+    setError(null);
+    setLoading(true);
+    try {
+      await login(demoEmail, demoPassword);
       onClose();
     } catch (err) {
       setError(err.message);
@@ -449,14 +486,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
 
             {/* Form */}
             <form
-              onSubmit={(e) => {
-                if (tab === 'register') {
-                  e.preventDefault();
-                  handleTouchSelectGoogleAccount({ email, name: username });
-                } else {
-                  handleLoginSubmit(e);
-                }
-              }}
+              onSubmit={tab === 'register' ? handleRegisterSubmit : handleLoginSubmit}
               className="space-y-3.5"
             >
               {tab === 'register' && (
@@ -495,24 +525,23 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                 </div>
               </div>
 
-              {tab === 'login' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-[#0d1117] border border-[#30363d] focus:border-indigo-500 text-xs text-white placeholder-slate-500 outline-none transition"
-                    />
-                  </div>
+              {/* Password field shown on both login and register */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-[#0d1117] border border-[#30363d] focus:border-indigo-500 text-xs text-white placeholder-slate-500 outline-none transition"
+                  />
                 </div>
-              )}
+              </div>
 
               {/* Skills Picker on Sign Up */}
               {tab === 'register' && (
@@ -553,12 +582,35 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                   {loading
                     ? 'Processing...'
                     : tab === 'register'
-                    ? 'Verify Email & Create Account'
+                    ? 'Create Account & Sign In'
                     : 'Sign In'}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
+
+            {/* Quick 1-Click Demo Logins */}
+            <div className="pt-3 border-t border-[#30363d] text-center space-y-2">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500">
+                ⚡ Instant 1-Click Demo Accounts
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('vishal@syncflow.io', 'demo123')}
+                  className="py-2 px-3 rounded-xl bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] hover:border-indigo-500/60 text-xs font-semibold text-slate-300 hover:text-white transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <span>👨‍💻 Demo Vishal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('alex@syncflow.io', 'demo123')}
+                  className="py-2 px-3 rounded-xl bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] hover:border-purple-500/60 text-xs font-semibold text-slate-300 hover:text-white transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <span>🚀 Demo Alex</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

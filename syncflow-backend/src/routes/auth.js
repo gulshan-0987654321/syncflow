@@ -209,10 +209,8 @@ router.post('/send-verification-otp', async (req, res) => {
 
         otpStore.set(normalizedEmail, { otp, expiresAt });
 
-        console.log(`📧 [EMAIL VERIFICATION CODE GENERATED] For ${normalizedEmail}: ${otp}`);
-
-        // Send email via Nodemailer
-        await sendVerificationEmail(normalizedEmail, otp);
+        // Send email via Nodemailer asynchronously in background
+        sendVerificationEmail(normalizedEmail, otp).catch((e) => console.warn('Mail send note:', e.message));
 
         res.status(200).json({
             message: `Verification code sent directly to ${normalizedEmail}!`,
