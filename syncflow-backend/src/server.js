@@ -2,11 +2,16 @@ import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 import connectDB from './config/db.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/user.js';
 import { updateUser } from './services/userService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 const app = express();
@@ -204,6 +209,21 @@ io.on('connection', (socket) => {
                 });
             }
         });
+    });
+// Serve Frontend Static assets in Production
+const frontendDistPath = path.resolve(__dirname, '../../syncflow-frontend/dist');
+app.use(express.static(frontendDistPath));
+
+app.get('*', (req, res, next) => {
+    // If request starts with /api or is a socket request, skip
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) {
+        return next();
+    }
+    const indexPath = path.join(frontendDistPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            next();
+        }
     });
 });
 

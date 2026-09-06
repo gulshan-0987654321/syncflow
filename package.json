@@ -1,0 +1,12 @@
+{
+  "name": "syncflow-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix syncflow-backend && npm install --prefix syncflow-frontend",
+    "build": "npm install --prefix syncflow-backend && npm install --prefix syncflow-frontend && npm run build --prefix syncflow-frontend",
+    "start": "node syncflow-backend/src/server.js",
+    "dev:backend": "npm run dev --prefix syncflow-backend",
+    "dev:frontend": "npm run dev --prefix syncflow-frontend"
+  }
+}
