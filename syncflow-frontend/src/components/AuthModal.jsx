@@ -63,6 +63,16 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
     return () => clearInterval(timer);
   }, [isVerifyingOtp, resendCountdown]);
 
+  // Synchronize modal tab when opened or initialTab prop changes
+  useEffect(() => {
+    if (isOpen) {
+      setTab(initialTab);
+      setError(null);
+      setIsVerifyingOtp(false);
+      setIsGooglePickerOpen(false);
+    }
+  }, [isOpen, initialTab]);
+
   if (!isOpen) return null;
 
   const toggleSkill = (skill) => {
@@ -151,7 +161,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
       if (!email || !password) {
         throw new Error('Please enter both your email and password.');
       }
-      await login(email, password);
+      await login(email.trim(), password);
       onClose();
     } catch (err) {
       setError(err.message);
@@ -167,13 +177,20 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
     setLoading(true);
 
     try {
-      if (!email || !password) {
-        throw new Error('Please enter both your email and password.');
+      if (!username || !username.trim()) {
+        throw new Error('Please enter your Display Name.');
+      }
+      if (!email || !email.trim()) {
+        throw new Error('Please enter your Email Address.');
+      }
+      if (!password) {
+        throw new Error('Please enter a password.');
       }
       if (password.length < 4) {
-        throw new Error('Password must be at least 4 characters.');
+        throw new Error('Password must be at least 4 characters long.');
       }
-      await register(username || email.split('@')[0], email, password, selectedSkills);
+
+      await register(username.trim(), email.trim(), password, selectedSkills);
       onClose();
     } catch (err) {
       setError(err.message);
@@ -486,7 +503,17 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
 
             {/* Form */}
             <form
+<<<<<<< HEAD
               onSubmit={tab === 'register' ? handleRegisterSubmit : handleLoginSubmit}
+=======
+              onSubmit={(e) => {
+                if (tab === 'register') {
+                  handleRegisterSubmit(e);
+                } else {
+                  handleLoginSubmit(e);
+                }
+              }}
+>>>>>>> 749ea8c (login in log out design issue resloved and camera working)
               className="space-y-3.5"
             >
               {tab === 'register' && (
@@ -525,7 +552,10 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                 </div>
               </div>
 
+<<<<<<< HEAD
               {/* Password field shown on both login and register */}
+=======
+>>>>>>> 749ea8c (login in log out design issue resloved and camera working)
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Password
@@ -582,7 +612,11 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                   {loading
                     ? 'Processing...'
                     : tab === 'register'
+<<<<<<< HEAD
                     ? 'Create Account & Sign In'
+=======
+                    ? 'Create Account'
+>>>>>>> 749ea8c (login in log out design issue resloved and camera working)
                     : 'Sign In'}
                 </span>
                 <ArrowRight className="w-4 h-4" />

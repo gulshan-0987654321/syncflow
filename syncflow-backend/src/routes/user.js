@@ -1,6 +1,6 @@
 import express from 'express';
 import verifyToken from '../middleware/authmiddleware.js';
-import User from '../models/user.js';
+import { findUserById, updateUser, getDevelopers } from '../services/userService.js';
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ router.get('/profile', verifyToken, async (req, res) => {
             return res.status(400).json({ message: 'Invalid token payload: User ID missing' });
         }
 
-        const user = await User.findById(userId).select('-password');
+        const user = await findUserById(userId);
         if (!user) {
             return res.status(404).json({ message: 'User not found!' });
         }
@@ -28,7 +28,7 @@ router.get('/profile', verifyToken, async (req, res) => {
     }
 });
 
-// 2. Update user profile (fullName, headline, yearsOfExperience, bio, skills, avatar, location, links)
+// 2. Update user profile
 router.put('/profile', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user.userId || req.user._id;
@@ -65,11 +65,7 @@ router.put('/profile', verifyToken, async (req, res) => {
         if (avatar !== undefined) updateData.avatar = avatar.trim();
         if (availabilityStatus !== undefined) updateData.availabilityStatus = availabilityStatus;
 
-        const updatedUser = await User.findByIdAndUpdate(
-            userId,
-            { $set: updateData },
-            { new: true, runValidators: true }
-        ).select('-password');
+        const updatedUser = await updateUser(userId, updateData);
 
         if (!updatedUser) {
             return res.status(404).json({ message: 'User not found!' });
@@ -91,26 +87,7 @@ router.get('/developers', verifyToken, async (req, res) => {
         const currentUserId = req.user.id || req.user.userId || req.user._id;
         const { skill, search } = req.query;
 
-        let query = {};
-        if (currentUserId) {
-            query._id = { $ne: currentUserId };
-        }
-
-        if (skill && skill !== 'all') {
-            query.skills = { $in: [new RegExp(`^${skill}$`, 'i')] };
-        }
-
-        if (search) {
-            query.$or = [
-                { username: { $regex: search, $options: 'i' } },
-                { fullName: { $regex: search, $options: 'i' } },
-                { headline: { $regex: search, $options: 'i' } },
-                { bio: { $regex: search, $options: 'i' } },
-                { skills: { $in: [new RegExp(search, 'i')] } }
-            ];
-        }
-
-        const developers = await User.find(query).select('-password').sort({ isOnline: -1, updatedAt: -1 });
+        const developers = await getDevelopers({ currentUserId, skill, search });
 
         res.status(200).json({
             count: developers.length,
@@ -126,7 +103,7 @@ router.get('/developers', verifyToken, async (req, res) => {
 // 4. Get specific developer by ID
 router.get('/:id', verifyToken, async (req, res) => {
     try {
-        const user = await User.findById(req.params.id).select('-password');
+        const user = await findUserById(req.params.id);
         if (!user) {
             return res.status(404).json({ message: 'Developer not found!' });
         }

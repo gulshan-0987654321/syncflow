@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
-import User from '../models/user.js';
+import { findUserByEmail, createUser, updateUser } from '../services/userService.js';
 
 const router = express.Router();
 
@@ -80,37 +80,42 @@ router.post('/register', async (req, res) => {
         const { username, email, password, skills, bio, avatar } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({ message: 'Please provide email and password!' });
+            return res.status(400).json({ message: 'Please provide both email and password!' });
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        let existingUser = await User.findOne({ email: normalizedEmail });
+        let existingUser = await findUserByEmail(normalizedEmail);
 
         if (existingUser) {
             const isMatch = await bcrypt.compare(password, existingUser.password);
             if (isMatch) {
-                existingUser.isOnline = true;
-                await existingUser.save();
-                const token = generateToken(existingUser._id);
+                const updatedUser = await updateUser(existingUser._id || existingUser.id, { isOnline: true });
+                const token = generateToken(existingUser._id || existingUser.id);
                 return res.status(200).json({
                     message: 'Logged in successfully!',
                     token,
-                    user: existingUser
+                    user: updatedUser || existingUser
                 });
             }
             return res.status(400).json({ message: 'An account with this email already exists with a different password. Please log in.' });
         }
 
-        const safeUsername = (username || normalizedEmail.split('@')[0])
+        const rawUsername = username || normalizedEmail.split('@')[0];
+        let safeUsername = rawUsername
             .replace(/\s+/g, '_')
             .replace(/[^a-zA-Z0-9_]/g, '')
             .toLowerCase();
 
+        if (!safeUsername) {
+            safeUsername = `user_${Date.now().toString().slice(-4)}`;
+        }
+
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        const newUser = new User({
+        const newUserData = {
             username: safeUsername,
+            fullName: username || safeUsername,
             email: normalizedEmail,
             password: hashedPassword,
             skills: skills && skills.length > 0 ? skills : ['React', 'Node.js', 'JavaScript'],
@@ -119,11 +124,10 @@ router.post('/register', async (req, res) => {
             isOnline: true,
             isVerified: true,
             availabilityStatus: 'available'
-        });
+        };
 
-        await newUser.save();
-
-        const token = generateToken(newUser._id);
+        const newUser = await createUser(newUserData);
+        const token = generateToken(newUser._id || newUser.id);
 
         res.status(201).json({
             message: 'User registered successfully!',
@@ -147,46 +151,24 @@ router.post('/login', async (req, res) => {
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        let user = await User.findOne({ email: normalizedEmail });
+        let user = await findUserByEmail(normalizedEmail);
 
         if (!user) {
-            const safeUsername = normalizedEmail.split('@')[0]
-                .replace(/\s+/g, '_')
-                .replace(/[^a-zA-Z0-9_]/g, '')
-                .toLowerCase();
-
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(password, salt);
-
-            user = new User({
-                username: safeUsername || `user_${Date.now().toString().slice(-4)}`,
-                email: normalizedEmail,
-                password: hashedPassword,
-                skills: ['React', 'JavaScript', 'Node.js'],
-                bio: 'Passionate Developer on SyncFlow 🚀',
-                avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${normalizedEmail}`,
-                isOnline: true,
-                isVerified: true,
-                availabilityStatus: 'available'
-            });
-
-            await user.save();
-        } else {
-            const isMatch = await bcrypt.compare(password, user.password);
-            if (!isMatch) {
-                return res.status(400).json({ message: 'Incorrect password for this email! Please try again.' });
-            }
+            return res.status(404).json({ message: 'No account found with this email. Please sign up first!' });
         }
 
-        user.isOnline = true;
-        await user.save();
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Incorrect password for this email! Please try again.' });
+        }
 
-        const token = generateToken(user._id);
+        const updatedUser = await updateUser(user._id || user.id, { isOnline: true });
+        const token = generateToken(user._id || user.id);
 
         res.status(200).json({
             message: 'Login successful!',
             token,
-            user
+            user: updatedUser || user
         });
 
     } catch (error) {
@@ -250,7 +232,7 @@ router.post('/verify-email-otp', async (req, res) => {
 
         otpStore.delete(normalizedEmail);
 
-        let user = await User.findOne({ email: normalizedEmail });
+        let user = await findUserByEmail(normalizedEmail);
 
         if (!user) {
             const baseUsername = (name || normalizedEmail.split('@')[0])
@@ -259,16 +241,11 @@ router.post('/verify-email-otp', async (req, res) => {
                 .toLowerCase();
 
             let uniqueUsername = baseUsername || `user_${Date.now().toString().slice(-4)}`;
-            const existingUsername = await User.findOne({ username: uniqueUsername });
-            if (existingUsername) {
-                uniqueUsername = `${uniqueUsername}_${Math.floor(Math.random() * 1000)}`;
-            }
-
             const randomPassword = Math.random().toString(36).slice(-10) + Date.now().toString(36);
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(randomPassword, salt);
 
-            user = new User({
+            user = await createUser({
                 username: uniqueUsername,
                 fullName: name || uniqueUsername,
                 email: normalizedEmail,
@@ -280,17 +257,16 @@ router.post('/verify-email-otp', async (req, res) => {
                 isVerified: true,
                 availabilityStatus: 'available'
             });
-
-            await user.save();
         } else {
-            user.isOnline = true;
-            user.isVerified = true;
-            if (name && !user.fullName) user.fullName = name;
-            if (avatar && !user.avatar) user.avatar = avatar;
-            await user.save();
+            user = await updateUser(user._id || user.id, {
+                isOnline: true,
+                isVerified: true,
+                ...(name && !user.fullName ? { fullName: name } : {}),
+                ...(avatar && !user.avatar ? { avatar } : {})
+            });
         }
 
-        const token = generateToken(user._id);
+        const token = generateToken(user._id || user.id);
 
         res.status(200).json({
             message: 'Email verified and logged in successfully!',
@@ -314,25 +290,20 @@ router.post('/google', async (req, res) => {
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        let user = await User.findOne({ email: normalizedEmail });
+        let user = await findUserByEmail(normalizedEmail);
 
         if (!user) {
             const baseUsername = (name || normalizedEmail.split('@')[0])
                 .replace(/\s+/g, '_')
                 .replace(/[^a-zA-Z0-9_]/g, '')
                 .toLowerCase();
-            
-            let uniqueUsername = baseUsername || `user_${Date.now().toString().slice(-4)}`;
-            const existingUsername = await User.findOne({ username: uniqueUsername });
-            if (existingUsername) {
-                uniqueUsername = `${uniqueUsername}_${Math.floor(Math.random() * 1000)}`;
-            }
 
+            let uniqueUsername = baseUsername || `user_${Date.now().toString().slice(-4)}`;
             const randomPassword = Math.random().toString(36).slice(-10) + Date.now().toString(36);
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(randomPassword, salt);
 
-            user = new User({
+            user = await createUser({
                 username: uniqueUsername,
                 fullName: name || uniqueUsername,
                 email: normalizedEmail,
@@ -344,17 +315,16 @@ router.post('/google', async (req, res) => {
                 isVerified: true,
                 availabilityStatus: 'available'
             });
-
-            await user.save();
         } else {
-            user.isOnline = true;
-            user.isVerified = true;
-            if (name && !user.fullName) user.fullName = name;
-            if (avatar && !user.avatar) user.avatar = avatar;
-            await user.save();
+            user = await updateUser(user._id || user.id, {
+                isOnline: true,
+                isVerified: true,
+                ...(name && !user.fullName ? { fullName: name } : {}),
+                ...(avatar && !user.avatar ? { avatar } : {})
+            });
         }
 
-        const token = generateToken(user._id);
+        const token = generateToken(user._id || user.id);
 
         res.status(200).json({
             message: 'Google login successful!',

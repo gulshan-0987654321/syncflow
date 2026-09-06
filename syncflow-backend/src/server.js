@@ -6,7 +6,7 @@ import { Server } from 'socket.io';
 import connectDB from './config/db.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/user.js';
-import User from './models/user.js';
+import { updateUser } from './services/userService.js';
 
 dotenv.config();
 const app = express();
@@ -43,8 +43,8 @@ io.on('connection', (socket) => {
 
     // 1. User Online Status Tracking
     socket.on('user_connected', async (userData) => {
-        if (!userData || !userData._id) return;
-        const userId = userData._id.toString();
+        if (!userData || (!userData._id && !userData.id)) return;
+        const userId = (userData._id || userData.id).toString();
 
         socketUserMap.set(socket.id, userId);
 
@@ -58,7 +58,7 @@ io.on('connection', (socket) => {
 
         // Update database isOnline flag
         try {
-            await User.findByIdAndUpdate(userId, { isOnline: true, availabilityStatus: 'available' });
+            await updateUser(userId, { isOnline: true, availabilityStatus: 'available' });
         } catch (e) {
             console.error('Error updating user online status:', e.message);
         }
@@ -187,7 +187,7 @@ io.on('connection', (socket) => {
             if (userSockets.size === 0) {
                 onlineUsers.delete(userId);
                 try {
-                    await User.findByIdAndUpdate(userId, { isOnline: false, availabilityStatus: 'offline' });
+                    await updateUser(userId, { isOnline: false, availabilityStatus: 'offline' });
                 } catch (e) {}
             }
             io.emit('online_users_list', Array.from(onlineUsers.keys()));
