@@ -5,7 +5,8 @@ SyncFlow is a collaborative developer workspace that brings real-time code editi
 ---
 
 ## 🌐 Live Application Link
-- **Live Demo / Deployment**: **[https://syncflow.onrender.com](https://syncflow.onrender.com)** *(or your Vercel deployment link)*
+- **Live Backend API & Socket Server**: **[https://syncflow-1-shjr.onrender.com](https://syncflow-1-shjr.onrender.com)**
+- **Health Endpoint**: **[https://syncflow-1-shjr.onrender.com/api/health](https://syncflow-1-shjr.onrender.com/api/health)**
 - **GitHub Repository**: **[https://github.com/gulshan-0987654321/syncflow](https://github.com/gulshan-0987654321/syncflow)**
 
 ---

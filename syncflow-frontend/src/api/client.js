@@ -1,4 +1,4 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? '' : 'http://localhost:5000');
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://syncflow-1-shjr.onrender.com' : 'http://localhost:5000');
 const API_BASE_URL = `${BACKEND_URL}/api`;
 
 export const registerUserAPI = async (userData) => {

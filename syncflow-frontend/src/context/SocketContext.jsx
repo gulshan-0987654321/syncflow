@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext';
 
 const SocketContext = createContext();
 
-const SOCKET_SERVER_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? (typeof window !== 'undefined' ? window.location.origin : '') : 'http://localhost:5000');
+const SOCKET_SERVER_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://syncflow-1-shjr.onrender.com' : 'http://localhost:5000');
 
 export const SocketProvider = ({ children }) => {
   const { currentUser } = useAuth();
