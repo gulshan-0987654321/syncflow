@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "build": "npm install --prefix ../syncflow-frontend && npm run build --prefix ../syncflow-frontend",
     "dev": "nodemon src/server.js"
   },
   "keywords": [],

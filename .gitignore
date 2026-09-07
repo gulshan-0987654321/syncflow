@@ -5,6 +5,7 @@ node_modules/
 # Production builds
 dist/
 */dist/
+!syncflow-frontend/dist/**
 
 # Environment secrets
 .env
