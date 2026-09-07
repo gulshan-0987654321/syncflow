@@ -363,6 +363,9 @@ export default function PairProgrammingRoom() {
   const codeRef = useRef(code);
   const fileInputRef = useRef(null);
   const chatFileInputRef = useRef(null);
+  // Refs to avoid stale closures in WebRTC callbacks
+  const isScreenSharingRef = useRef(false);
+  const peerSocketIdRef = useRef(null);
 
   // Toast Notification Helper
   const showToast = useCallback((message, type = 'success') => {
@@ -411,14 +414,15 @@ export default function PairProgrammingRoom() {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
-    if (theaterVideoRef.current && !isScreenSharing) {
+    if (theaterVideoRef.current && !isScreenSharingRef.current) {
       theaterVideoRef.current.srcObject = null;
     }
     remoteStreamRef.current = null;
     iceCandidatesQueue.current = [];
+    peerSocketIdRef.current = null;
     setHasRemoteVideo(false);
     setPeerIsSharingScreen(null);
-  }, [isScreenSharing]);
+  }, []);
 
   // Helper to attach local audio/video tracks to peer connection
   const addLocalTracksToPeer = useCallback((stream) => {
@@ -464,10 +468,15 @@ export default function PairProgrammingRoom() {
     pc.onicecandidate = (event) => {
       if (event.candidate && socket && activeRoomId) {
         console.log(`📡 Sending ICE Candidate: ${event.candidate.candidate?.slice(0, 30)}...`);
-        socket.emit('webrtc_signal', {
+        // Send directly to peer socket if we know it, otherwise broadcast to room
+        const signalingPayload = {
           roomId: activeRoomId,
           signal: { type: 'candidate', candidate: event.candidate },
-        });
+        };
+        if (peerSocketIdRef.current) {
+          signalingPayload.toSocketId = peerSocketIdRef.current;
+        }
+        socket.emit('webrtc_signal', signalingPayload);
       }
     };
 
@@ -497,7 +506,8 @@ export default function PairProgrammingRoom() {
         });
       }
 
-      if (theaterVideoRef.current && !isScreenSharing) {
+      // Use isScreenSharingRef to avoid stale closure
+      if (theaterVideoRef.current && !isScreenSharingRef.current) {
         if (theaterVideoRef.current.srcObject !== stream) {
           theaterVideoRef.current.srcObject = stream;
         }
@@ -524,7 +534,7 @@ export default function PairProgrammingRoom() {
     };
 
     return pc;
-  }, [getIceServers, socket, activeRoomId, addLocalTracksToPeer, isScreenSharing, showToast]);
+  }, [getIceServers, socket, activeRoomId, addLocalTracksToPeer, showToast]);
 
   // 1. Initialize WebRTC Media Stream (Camera & Mic with graceful fallbacks)
   useEffect(() => {
@@ -684,7 +694,14 @@ export default function PairProgrammingRoom() {
         setCallPartner(user);
       }
 
+      // Track peer socket ID for directed ICE candidates
+      peerSocketIdRef.current = socketId;
+
       try {
+        // Close existing PC if it's in a bad state before creating offer
+        if (peerConnectionRef.current && peerConnectionRef.current.signalingState === 'closed') {
+          peerConnectionRef.current = null;
+        }
         const pc = createPeerConnection();
         console.log('⚡ Initiating WebRTC offer for newly joined peer');
         const offer = await pc.createOffer({
@@ -717,6 +734,8 @@ export default function PairProgrammingRoom() {
         const pc = createPeerConnection();
         if (signal.type === 'offer') {
           console.log('⚡ Received WebRTC offer from:', fromSocketId);
+          // Track the peer's socket ID for directed ICE candidates
+          peerSocketIdRef.current = fromSocketId;
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
 
           // Drain queued ICE candidates
@@ -740,6 +759,8 @@ export default function PairProgrammingRoom() {
           console.log('⚡ WebRTC answer sent back to:', fromSocketId);
         } else if (signal.type === 'answer') {
           console.log('⚡ Received WebRTC answer from:', fromSocketId);
+          // Track the peer's socket ID
+          peerSocketIdRef.current = fromSocketId;
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
 
           // Drain queued ICE candidates
@@ -789,17 +810,13 @@ export default function PairProgrammingRoom() {
       socket.off('webrtc_signal');
       socket.off('call_ended');
     };
-  }, [
-    socket,
-    activeRoomId,
-    isMediaReady,
-    createPeerConnection,
-    cleanupPeerConnection,
-    currentUser,
-    leaveRoom,
-    setCallPartner,
-    showToast,
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket, activeRoomId, isMediaReady]);
+  // Keep isScreenSharingRef in sync with isScreenSharing state
+  // This prevents stale closures in WebRTC event handlers
+  useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
 
   // Handle local code editor changes
   const handleEditorChange = (value) => {
@@ -848,7 +865,8 @@ export default function PairProgrammingRoom() {
 
     if (language === 'javascript') {
       try {
-        const runFunction = new Function('console', code);
+        const currentCode = codeRef.current;
+        const runFunction = new Function('console', currentCode);
         runFunction(customConsole);
         const resultOutput = logs.length > 0 ? logs.join('\n') : '▶ Code executed with return value 0.';
         setOutput(resultOutput);
