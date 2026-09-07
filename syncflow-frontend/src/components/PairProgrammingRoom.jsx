@@ -327,7 +327,7 @@ const formatFileSize = (bytes) => {
 
 export default function PairProgrammingRoom() {
   const { currentUser } = useAuth();
-  const { socket, activeRoomId, callPartner, leaveRoom } = useSocket();
+  const { socket, activeRoomId, callPartner, setCallPartner, leaveRoom } = useSocket();
 
   const [code, setCode] = useState(LANGUAGE_TEMPLATES.javascript);
   const [language, setLanguage] = useState('javascript');
@@ -344,6 +344,7 @@ export default function PairProgrammingRoom() {
   const [peerIsSharingScreen, setPeerIsSharingScreen] = useState(null);
   const [theaterMode, setTheaterMode] = useState(false);
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [isMediaReady, setIsMediaReady] = useState(false);
 
   // File Drag & Drop State
   const [isDraggingOverEditor, setIsDraggingOverEditor] = useState(false);
@@ -359,7 +360,7 @@ export default function PairProgrammingRoom() {
   const screenStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
-  const isIncomingCodeChange = useRef(false);
+  const codeRef = useRef(code);
   const fileInputRef = useRef(null);
   const chatFileInputRef = useRef(null);
 
@@ -368,6 +369,56 @@ export default function PairProgrammingRoom() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
+
+  // Production-grade ICE servers with STUN + optional TURN via environment variables
+  const getIceServers = useCallback(() => {
+    const servers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+    ];
+
+    const turnUrl = import.meta.env.VITE_TURN_URL;
+    const turnUsername = import.meta.env.VITE_TURN_USERNAME;
+    const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL;
+
+    if (turnUrl) {
+      const turnConfig = { urls: turnUrl };
+      if (turnUsername) turnConfig.username = turnUsername;
+      if (turnCredential) turnConfig.credential = turnCredential;
+      servers.push(turnConfig);
+      console.log('⚡ Using custom TURN server for WebRTC relay');
+    }
+
+    return servers;
+  }, []);
+
+  // Cleanup WebRTC Peer Connection
+  const cleanupPeerConnection = useCallback(() => {
+    if (peerConnectionRef.current) {
+      console.log('🧹 Cleaning up RTCPeerConnection');
+      try {
+        peerConnectionRef.current.onicecandidate = null;
+        peerConnectionRef.current.ontrack = null;
+        peerConnectionRef.current.onconnectionstatechange = null;
+        peerConnectionRef.current.oniceconnectionstatechange = null;
+        peerConnectionRef.current.close();
+      } catch (e) {}
+      peerConnectionRef.current = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    if (theaterVideoRef.current && !isScreenSharing) {
+      theaterVideoRef.current.srcObject = null;
+    }
+    remoteStreamRef.current = null;
+    iceCandidatesQueue.current = [];
+    setHasRemoteVideo(false);
+    setPeerIsSharingScreen(null);
+  }, [isScreenSharing]);
 
   // Helper to attach local audio/video tracks to peer connection
   const addLocalTracksToPeer = useCallback((stream) => {
@@ -379,6 +430,7 @@ export default function PairProgrammingRoom() {
       if (!alreadyAdded) {
         try {
           pc.addTrack(track, stream);
+          console.log(`📡 Local track added to PeerConnection: ${track.kind} (${track.id})`);
         } catch (e) {
           console.warn('Track add warning:', e.message);
         }
@@ -389,15 +441,16 @@ export default function PairProgrammingRoom() {
   // WebRTC Peer Connection Initializer
   const createPeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
-      return peerConnectionRef.current;
+      const state = peerConnectionRef.current.signalingState;
+      if (state !== 'closed') {
+        return peerConnectionRef.current;
+      }
     }
 
+    console.log('⚡ Creating new RTCPeerConnection with ICE servers');
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-      ],
+      iceServers: getIceServers(),
+      iceCandidatePoolSize: 10,
     });
 
     peerConnectionRef.current = pc;
@@ -410,6 +463,7 @@ export default function PairProgrammingRoom() {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socket && activeRoomId) {
+        console.log(`📡 Sending ICE Candidate: ${event.candidate.candidate?.slice(0, 30)}...`);
         socket.emit('webrtc_signal', {
           roomId: activeRoomId,
           signal: { type: 'candidate', candidate: event.candidate },
@@ -418,53 +472,103 @@ export default function PairProgrammingRoom() {
     };
 
     pc.ontrack = (event) => {
-      console.log('📡 WebRTC remote track received:', event.track.kind);
-      if (event.streams && event.streams[0]) {
-        const stream = event.streams[0];
+      console.log('📡 WebRTC remote track received:', event.track.kind, 'ID:', event.track.id);
+
+      // Handle streams: some browsers supply event.streams[0], others supply isolated track
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
+        }
+        if (!remoteStreamRef.current.getTracks().some((t) => t.id === event.track.id)) {
+          remoteStreamRef.current.addTrack(event.track);
+        }
+        stream = remoteStreamRef.current;
+      } else {
         remoteStreamRef.current = stream;
-        if (remoteVideoRef.current) {
+      }
+
+      if (remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== stream) {
           remoteVideoRef.current.srcObject = stream;
-          remoteVideoRef.current.play().catch(() => {});
         }
-        if (theaterVideoRef.current) {
+        remoteVideoRef.current.play().catch((err) => {
+          console.warn('Remote video play warning:', err.message);
+        });
+      }
+
+      if (theaterVideoRef.current && !isScreenSharing) {
+        if (theaterVideoRef.current.srcObject !== stream) {
           theaterVideoRef.current.srcObject = stream;
-          theaterVideoRef.current.play().catch(() => {});
         }
+        theaterVideoRef.current.play().catch(() => {});
+      }
+
+      if (event.track.kind === 'video') {
         setHasRemoteVideo(true);
       }
     };
 
-    return pc;
-  }, [socket, activeRoomId, addLocalTracksToPeer]);
+    pc.onconnectionstatechange = () => {
+      console.log(`📡 WebRTC Connection State: ${pc.connectionState}`);
+      if (pc.connectionState === 'connected') {
+        console.log('✅ WebRTC P2P Connection ESTABLISHED!');
+        showToast('Connected to peer!', 'success');
+      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        console.warn(`⚠️ WebRTC Connection state: ${pc.connectionState}`);
+      }
+    };
 
-  // 1. Initialize WebRTC Media Stream (Camera & Mic with fallbacks)
+    pc.oniceconnectionstatechange = () => {
+      console.log(`📡 WebRTC ICE Connection State: ${pc.iceConnectionState}`);
+    };
+
+    return pc;
+  }, [getIceServers, socket, activeRoomId, addLocalTracksToPeer, isScreenSharing, showToast]);
+
+  // 1. Initialize WebRTC Media Stream (Camera & Mic with graceful fallbacks)
   useEffect(() => {
-    let stream = null;
+    let active = true;
 
     const startMedia = async () => {
+      let stream = null;
       try {
-        // Preferred: HD Video + Audio with noise cancellation
+        console.log('📷 Requesting camera & microphone access...');
         stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
+        console.log('✅ Camera & microphone acquired successfully');
       } catch (err) {
-        console.warn('Camera+Mic not available, trying audio only fallback:', err.message);
+        console.warn('Camera+Mic not available, trying audio fallback:', err.name, err.message);
+        if (err.name === 'NotAllowedError') {
+          showToast('Camera/Mic permission denied. Please allow permissions in your browser.', 'error');
+        } else if (err.name === 'NotFoundError') {
+          showToast('No camera or microphone device found.', 'error');
+        } else if (err.name === 'NotReadableError') {
+          showToast('Camera or mic is currently busy in another app.', 'error');
+        }
+
         try {
           // Fallback 1: Audio only
           stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
           setIsVideoOff(true);
         } catch (audioErr) {
-          console.warn('Audio fallback failed, trying video only fallback:', audioErr.message);
+          console.warn('Audio fallback failed, trying video only:', audioErr.message);
           try {
             // Fallback 2: Video only
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
             setIsMuted(true);
           } catch (allErr) {
             console.warn('No media devices available or permissions denied:', allErr.message);
-            showToast('Camera/Mic permission denied or device busy. Workspace features remain fully active!', 'info');
+            showToast('Media permissions unavailable. Live code editor and chat remain fully active!', 'info');
           }
         }
+      }
+
+      if (!active) {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        return;
       }
 
       if (stream) {
@@ -474,44 +578,74 @@ export default function PairProgrammingRoom() {
         }
         addLocalTracksToPeer(stream);
       }
+
+      setIsMediaReady(true);
     };
 
     startMedia();
 
     return () => {
+      active = false;
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
       }
       if (screenStreamRef.current) {
         screenStreamRef.current.getTracks().forEach((track) => track.stop());
+        screenStreamRef.current = null;
       }
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-      }
+      cleanupPeerConnection();
     };
-  }, [addLocalTracksToPeer, showToast]);
+  }, [addLocalTracksToPeer, cleanupPeerConnection, showToast]);
 
   // 2. Socket Room Listeners for Real-Time Sync, File Sharing, Screen Sharing & WebRTC
   useEffect(() => {
-    if (!socket || !activeRoomId) return;
+    if (!socket || !activeRoomId || !isMediaReady) return;
 
-    // Join room
+    console.log(`⚡ Joining code room: ${activeRoomId}`);
     socket.emit('join_code_room', {
       roomId: activeRoomId,
       user: currentUser || { username: 'Guest' },
     });
 
+    const handleConnect = () => {
+      console.log('⚡ Socket reconnected. Re-joining room:', activeRoomId);
+      socket.emit('join_code_room', {
+        roomId: activeRoomId,
+        user: currentUser || { username: 'Guest' },
+      });
+    };
+    socket.on('connect', handleConnect);
+
     socket.on('room_state', (roomData) => {
-      if (roomData.code) setCode(roomData.code);
+      console.log('📋 Received room state:', roomData);
+      if (roomData.code) {
+        codeRef.current = roomData.code;
+        setCode(roomData.code);
+      }
       if (roomData.language) setLanguage(roomData.language);
+
+      if (roomData.participants && roomData.participants.length > 0) {
+        const otherParticipant = roomData.participants.find(
+          (p) => p && (p._id !== currentUser?._id && p.id !== currentUser?.id && p.socketId !== socket.id)
+        );
+        if (otherParticipant && setCallPartner) {
+          console.log('👤 Room partner detected from room state:', otherParticipant.username);
+          setCallPartner(otherParticipant);
+        }
+      }
     });
 
     socket.on('code_change', ({ code: newCode }) => {
-      isIncomingCodeChange.current = true;
-      setCode(newCode);
+      if (newCode !== undefined && newCode !== codeRef.current) {
+        console.log(`📝 Received remote code change (${newCode.length} chars)`);
+        codeRef.current = newCode;
+        setCode(newCode);
+      }
     });
 
     socket.on('language_change', ({ language: newLang }) => {
+      console.log(`🌐 Received remote language change: ${newLang}`);
       setLanguage(newLang);
     });
 
@@ -543,52 +677,91 @@ export default function PairProgrammingRoom() {
     });
 
     // WebRTC Signaling Handlers
-    socket.on('user_joined_room', async ({ user }) => {
+    socket.on('user_joined_room', async ({ user, socketId }) => {
+      console.log('👋 User joined room:', user?.username, 'Socket:', socketId);
       showToast(`👋 ${user?.username || 'Peer'} joined workspace!`, 'info');
+      if (user && setCallPartner) {
+        setCallPartner(user);
+      }
+
       try {
         const pc = createPeerConnection();
-        const offer = await pc.createOffer();
+        console.log('⚡ Initiating WebRTC offer for newly joined peer');
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
         await pc.setLocalDescription(offer);
         socket.emit('webrtc_signal', {
           roomId: activeRoomId,
+          toSocketId: socketId,
           signal: { type: 'offer', sdp: offer },
         });
+        console.log('⚡ WebRTC offer sent successfully');
       } catch (err) {
-        console.warn('WebRTC offer error:', err.message);
+        console.warn('WebRTC offer creation error:', err.message);
       }
     });
 
-    socket.on('webrtc_signal', async ({ signal }) => {
+    socket.on('user_left_room', ({ user, socketId }) => {
+      console.log('🚪 User left room:', user?.username, 'Socket:', socketId);
+      showToast(`🚪 ${user?.username || 'Peer'} left the room.`, 'info');
+      cleanupPeerConnection();
+      if (setCallPartner) {
+        setCallPartner(null);
+      }
+    });
+
+    socket.on('webrtc_signal', async ({ signal, fromSocketId }) => {
       try {
         const pc = createPeerConnection();
         if (signal.type === 'offer') {
+          console.log('⚡ Received WebRTC offer from:', fromSocketId);
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-          // Drain buffered candidates
+
+          // Drain queued ICE candidates
           while (iceCandidatesQueue.current.length > 0) {
             const cand = iceCandidatesQueue.current.shift();
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
-            } catch (e) {}
+              console.log('🧊 Added buffered ICE candidate to remote offer');
+            } catch (e) {
+              console.warn('Buffered candidate warning:', e.message);
+            }
           }
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           socket.emit('webrtc_signal', {
             roomId: activeRoomId,
+            toSocketId: fromSocketId,
             signal: { type: 'answer', sdp: answer },
           });
+          console.log('⚡ WebRTC answer sent back to:', fromSocketId);
         } else if (signal.type === 'answer') {
+          console.log('⚡ Received WebRTC answer from:', fromSocketId);
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-          // Drain buffered candidates
+
+          // Drain queued ICE candidates
           while (iceCandidatesQueue.current.length > 0) {
             const cand = iceCandidatesQueue.current.shift();
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
-            } catch (e) {}
+              console.log('🧊 Added buffered ICE candidate to remote answer');
+            } catch (e) {
+              console.warn('Buffered candidate warning:', e.message);
+            }
           }
         } else if (signal.type === 'candidate' && signal.candidate) {
           if (pc.remoteDescription && pc.remoteDescription.type) {
-            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+              console.log('🧊 Added incoming ICE candidate');
+            } catch (e) {
+              console.warn('Add ICE candidate warning:', e.message);
+            }
           } else {
+            console.log('🧊 Queuing incoming ICE candidate (remote description not set yet)');
             iceCandidatesQueue.current.push(signal.candidate);
           }
         }
@@ -603,6 +776,7 @@ export default function PairProgrammingRoom() {
     });
 
     return () => {
+      socket.off('connect', handleConnect);
       socket.off('room_state');
       socket.off('code_change');
       socket.off('language_change');
@@ -611,18 +785,29 @@ export default function PairProgrammingRoom() {
       socket.off('room_file_share');
       socket.off('screen_share_status');
       socket.off('user_joined_room');
+      socket.off('user_left_room');
       socket.off('webrtc_signal');
       socket.off('call_ended');
     };
-  }, [socket, activeRoomId, createPeerConnection, currentUser, leaveRoom, showToast]);
+  }, [
+    socket,
+    activeRoomId,
+    isMediaReady,
+    createPeerConnection,
+    cleanupPeerConnection,
+    currentUser,
+    leaveRoom,
+    setCallPartner,
+    showToast,
+  ]);
 
   // Handle local code editor changes
   const handleEditorChange = (value) => {
-    if (isIncomingCodeChange.current) {
-      isIncomingCodeChange.current = false;
+    if (value === undefined || value === codeRef.current) {
       return;
     }
 
+    codeRef.current = value;
     setCode(value);
     if (socket && activeRoomId) {
       socket.emit('code_change', {
@@ -635,6 +820,7 @@ export default function PairProgrammingRoom() {
   const handleLanguageChange = (newLang) => {
     setLanguage(newLang);
     const template = LANGUAGE_TEMPLATES[newLang] || '// Start coding...';
+    codeRef.current = template;
     setCode(template);
 
     if (socket && activeRoomId) {
@@ -741,14 +927,22 @@ export default function PairProgrammingRoom() {
 
       // Replace track on WebRTC peer connection
       if (peerConnectionRef.current) {
-        const sender = peerConnectionRef.current
-          .getSenders()
-          .find((s) => s.track && s.track.kind === 'video');
-        if (sender && screenTrack) {
-          await sender.replaceTrack(screenTrack);
+        const pc = peerConnectionRef.current;
+        const senders = pc.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && screenTrack) {
+          console.log('🔄 Replacing video track with screen track on existing sender');
+          await videoSender.replaceTrack(screenTrack);
         } else if (screenTrack) {
           try {
-            peerConnectionRef.current.addTrack(screenTrack, displayStream);
+            console.log('➕ Adding screen track to peer connection and renegotiating');
+            pc.addTrack(screenTrack, displayStream);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('webrtc_signal', {
+              roomId: activeRoomId,
+              signal: { type: 'offer', sdp: offer },
+            });
           } catch (e) {
             console.warn('Track add error:', e.message);
           }
@@ -773,7 +967,9 @@ export default function PairProgrammingRoom() {
     } catch (err) {
       if (err.name !== 'NotAllowedError') {
         console.warn('Screen share error:', err.message);
-        showToast('Screen share failed: ' + err.message, 'error');
+        showToast('Screen share error: ' + err.message, 'error');
+      } else {
+        console.log('User cancelled screen share prompt');
       }
     }
   };
@@ -792,11 +988,11 @@ export default function PairProgrammingRoom() {
       // Revert WebRTC sender track back to camera
       if (peerConnectionRef.current) {
         const cameraTrack = localStreamRef.current.getVideoTracks()[0];
-        const sender = peerConnectionRef.current
-          .getSenders()
-          .find((s) => s.track && s.track.kind === 'video');
-        if (sender && cameraTrack) {
-          await sender.replaceTrack(cameraTrack);
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && cameraTrack) {
+          console.log('🔄 Reverting screen track back to camera track');
+          await videoSender.replaceTrack(cameraTrack);
         }
       }
     }
@@ -917,6 +1113,7 @@ export default function PairProgrammingRoom() {
     reader.onload = (event) => {
       const fileContent = event.target.result;
       const targetLang = detectedLang || 'javascript';
+      codeRef.current = fileContent;
       setCode(fileContent);
       setLanguage(targetLang);
 
@@ -947,6 +1144,7 @@ export default function PairProgrammingRoom() {
       const ext = fileItem.ext || fileItem.name.split('.').pop().toLowerCase();
       const detectedLang = EXTENSION_TO_LANGUAGE[ext] || 'javascript';
 
+      codeRef.current = decodedText;
       setCode(decodedText);
       setLanguage(detectedLang);
 

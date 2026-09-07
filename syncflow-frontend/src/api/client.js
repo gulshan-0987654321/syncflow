@@ -1,5 +1,9 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://syncflow-backend-rf0d.onrender.com' : 'http://localhost:5000');
-const API_BASE_URL = `${BACKEND_URL}/api`;
+const rawApiUrl = import.meta.env.VITE_API_URL;
+const rawBackendUrl = import.meta.env.VITE_BACKEND_URL;
+const defaultBackend = import.meta.env.PROD ? 'https://syncflow-backend-rf0d.onrender.com' : 'http://localhost:5000';
+
+const BACKEND_URL = rawBackendUrl ? rawBackendUrl.replace(/\/+$/, '') : (rawApiUrl ? rawApiUrl.replace(/\/api\/?$/, '') : defaultBackend);
+const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/+$/, '') : `${BACKEND_URL}/api`;
 
 export const registerUserAPI = async (userData) => {
   const res = await fetch(`${API_BASE_URL}/auth/register`, {

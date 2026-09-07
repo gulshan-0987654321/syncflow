@@ -4,7 +4,16 @@ import { useAuth } from './AuthContext';
 
 const SocketContext = createContext();
 
-const SOCKET_SERVER_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://syncflow-backend-rf0d.onrender.com' : 'http://localhost:5000');
+const rawSocketUrl = import.meta.env.VITE_SOCKET_URL;
+const rawBackendUrl = import.meta.env.VITE_BACKEND_URL;
+const rawApiUrl = import.meta.env.VITE_API_URL;
+const defaultBackend = import.meta.env.PROD ? 'https://syncflow-backend-rf0d.onrender.com' : 'http://localhost:5000';
+
+const SOCKET_SERVER_URL = (
+  rawSocketUrl ||
+  rawBackendUrl ||
+  (rawApiUrl ? rawApiUrl.replace(/\/api\/?$/, '') : defaultBackend)
+).replace(/\/+$/, '');
 
 export const SocketProvider = ({ children }) => {
   const { currentUser } = useAuth();
@@ -18,18 +27,28 @@ export const SocketProvider = ({ children }) => {
   const socketRef = useRef(null);
 
   useEffect(() => {
+    console.log(`⚡ Connecting Socket.IO to: ${SOCKET_SERVER_URL}`);
     const newSocket = io(SOCKET_SERVER_URL, {
       transports: ['websocket', 'polling'],
+      withCredentials: true,
     });
 
     socketRef.current = newSocket;
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
-      console.log('⚡ Connected to SyncFlow Socket.IO Server');
+      console.log(`⚡ Connected to SyncFlow Socket.IO Server (ID: ${newSocket.id})`);
       if (currentUser && currentUser._id) {
         newSocket.emit('user_connected', currentUser);
       }
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.warn('⚠️ Socket.IO connection error:', err.message);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.log('⚡ Socket disconnected:', reason);
     });
 
     newSocket.on('online_users_list', (usersList) => {
@@ -158,6 +177,7 @@ export const SocketProvider = ({ children }) => {
         incomingCall,
         activeRoomId,
         callPartner,
+        setCallPartner,
         callStatus,
         createRoom,
         joinRoom,

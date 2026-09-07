@@ -18,21 +18,46 @@ dotenv.config();
 const app = express();
 const httpServer = http.createServer(app);
 
-// Socket.IO Setup
+const allowedOrigins = [
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    'https://syncflow-app.vercel.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:5000'
+].filter(Boolean);
+
+const corsOriginValidator = (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.onrender.com') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1')
+    ) {
+        return callback(null, origin);
+    }
+    return callback(null, origin);
+};
+
+const corsOptions = {
+    origin: corsOriginValidator,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true
+};
+
+// Socket.IO Setup with Production CORS
 const io = new Server(httpServer, {
     maxHttpBufferSize: 2e7, // 20 MB for smooth drag & drop file sharing
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST', 'PUT', 'DELETE'],
-        credentials: true
-    }
+    cors: corsOptions
 });
 
 app.get("/", (req, res) => {
     res.send("Syncflow Backend is Running 🚀");
 });
 
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -112,6 +137,8 @@ io.on('connection', (socket) => {
 
     // 3. WebRTC Direct P2P Media Signaling
     socket.on('webrtc_signal', ({ roomId, signal, toSocketId }) => {
+        const signalType = signal?.type || (signal?.candidate ? 'candidate' : 'unknown');
+        console.log(`📡 [WebRTC Signal] ${signalType} from ${socket.id} to ${toSocketId || roomId}`);
         if (toSocketId) {
             io.to(toSocketId).emit('webrtc_signal', {
                 signal,
@@ -128,7 +155,7 @@ io.on('connection', (socket) => {
     // 4. Collaborative Live Code Editor Events
     socket.on('join_code_room', ({ roomId, user }) => {
         socket.join(roomId);
-        console.log(`👨‍💻 User ${user?.username || socket.id} joined code room: ${roomId}`);
+        console.log(`👨‍💻 User ${user?.username || socket.id} (${socket.id}) joined code room: ${roomId}`);
 
         if (!activeRooms.has(roomId)) {
             activeRooms.set(roomId, {
@@ -139,7 +166,8 @@ io.on('connection', (socket) => {
         }
 
         const roomData = activeRooms.get(roomId);
-        roomData.participants.set(socket.id, user);
+        const participantInfo = { ...(user || {}), socketId: socket.id };
+        roomData.participants.set(socket.id, participantInfo);
 
         // Send current room state to the newly joined user
         socket.emit('room_state', {
@@ -148,9 +176,10 @@ io.on('connection', (socket) => {
             participants: Array.from(roomData.participants.values())
         });
 
-        // Notify others in room
+        // Notify others in room with full participant info including socketId
         socket.to(roomId).emit('user_joined_room', {
-            user,
+            user: participantInfo,
+            socketId: socket.id,
             participants: Array.from(roomData.participants.values())
         });
     });
@@ -159,6 +188,7 @@ io.on('connection', (socket) => {
         if (activeRooms.has(roomId)) {
             activeRooms.get(roomId).code = code;
         }
+        console.log(`📝 Code change in ${roomId} by ${socket.id} (${code?.length || 0} bytes)`);
         socket.to(roomId).emit('code_change', { code });
     });
 
@@ -170,6 +200,7 @@ io.on('connection', (socket) => {
         if (activeRooms.has(roomId)) {
             activeRooms.get(roomId).language = language;
         }
+        console.log(`🌐 Language change in ${roomId} to ${language} by ${socket.id}`);
         socket.to(roomId).emit('language_change', { language });
     });
 
@@ -182,10 +213,12 @@ io.on('connection', (socket) => {
     });
 
     socket.on('room_file_share', ({ roomId, file }) => {
+        console.log(`📁 File shared in ${roomId} by ${socket.id}: ${file?.name}`);
         io.to(roomId).emit('room_file_share', file);
     });
 
     socket.on('screen_share_status', ({ roomId, isSharing, user }) => {
+        console.log(`🖥️ Screen share status in ${roomId}: ${isSharing} by ${user || socket.id}`);
         socket.to(roomId).emit('screen_share_status', { isSharing, user });
     });
 
@@ -212,8 +245,10 @@ io.on('connection', (socket) => {
             if (roomData.participants.has(socket.id)) {
                 const leavingUser = roomData.participants.get(socket.id);
                 roomData.participants.delete(socket.id);
+                console.log(`🚪 User ${leavingUser?.username || socket.id} left room ${roomId}`);
                 socket.to(roomId).emit('user_left_room', {
                     user: leavingUser,
+                    socketId: socket.id,
                     participants: Array.from(roomData.participants.values())
                 });
             }
