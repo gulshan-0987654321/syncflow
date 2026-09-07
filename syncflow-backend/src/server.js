@@ -2,6 +2,7 @@ import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
@@ -53,7 +54,7 @@ const io = new Server(httpServer, {
     cors: corsOptions
 });
 
-app.get("/", (req, res) => {
+app.get("/api/status", (req, res) => {
     res.send("Syncflow Backend is Running 🚀");
 });
 
@@ -266,11 +267,10 @@ app.use((req, res, next) => {
         return next();
     }
     const indexPath = path.join(frontendDistPath, 'index.html');
-    res.sendFile(indexPath, (err) => {
-        if (err) {
-            next();
-        }
-    });
+    if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+    }
+    res.send("Syncflow Backend is Running 🚀 (Build frontend to view UI)");
 });
 
 const PORT = process.env.PORT || 5000;
