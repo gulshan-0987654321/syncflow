@@ -6,6 +6,7 @@ node_modules/
 dist/
 */dist/
 !syncflow-frontend/dist/**
+!syncflow-backend/dist/**
 
 # Environment secrets
 .env

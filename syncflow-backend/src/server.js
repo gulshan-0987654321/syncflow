@@ -258,7 +258,12 @@ io.on('connection', (socket) => {
 });
 
 // Serve Frontend Static assets in Production (if dist exists)
-const frontendDistPath = path.resolve(__dirname, '../../syncflow-frontend/dist');
+const possibleDistPaths = [
+    path.resolve(__dirname, '../../syncflow-frontend/dist'),
+    path.resolve(__dirname, '../dist'),
+    path.resolve(__dirname, './dist')
+];
+const frontendDistPath = possibleDistPaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || possibleDistPaths[0];
 app.use(express.static(frontendDistPath));
 
 app.use((req, res, next) => {
